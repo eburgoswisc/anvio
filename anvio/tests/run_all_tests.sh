@@ -55,11 +55,11 @@ anvi-export-gene-calls -c $output_dir/CONTIGS.db \
 
 INFO "Exporting contig sequences from the contigs database"
 anvi-export-contigs -c $output_dir/CONTIGS.db \
-                    -o $output_dir/exported_contig_seqeunces.fa
+                    -o $output_dir/exported_contig_sequences.fa
 
 INFO "Exporting contig sequences from the contigs database in 'splits mode'"
 anvi-export-contigs -c $output_dir/CONTIGS.db \
-                    -o $output_dir/exported_split_seqeunces.fa \
+                    -o $output_dir/exported_split_sequences.fa \
                     --splits-mode
 
 INFO "Populating taxonomy for splits table in the database using 'centrifuge' parser"
@@ -95,9 +95,17 @@ INFO "Export genomic locus using HMM"
 anvi-export-locus -c $output_dir/CONTIGS.db \
                   -O $output_dir/exported_locus_from_hmm \
                   -n 22,22 \
-                  -s S-AdoMet_synt_C \
+                  -s RNA_pol_Rpb6 \
                   --use-hmm \
-                  --hmm-sources Bacteria_71 
+                  --hmm-sources Bacteria_71
+
+INFO "Export genomic locus using HMM (multiple, only 1 expected hit)"
+anvi-export-locus -c $output_dir/CONTIGS.db \
+                  -O $output_dir/exported_locus_from_hmm_multi \
+                  -n 22,22 \
+                  -s RNA_pol_Rpb6,fake_gene \
+                  --use-hmm \
+                  --hmm-sources Bacteria_71
 
 INFO "Recovering completeness esimates for the contigs db"
 anvi-compute-completeness -c $output_dir/CONTIGS.db
@@ -130,7 +138,23 @@ INFO "Export genomic locus using functional annotation search"
 anvi-export-locus -c $output_dir/CONTIGS.db \
                   -O $output_dir/exported_locus_from_functions \
                   -n 22,22 \
-                  -s NusB
+                  -s NusB \
+                  --overwrite-output-destinations
+
+INFO "Export genomic locus using functional annotation search (multiple; 2 expected)"
+anvi-export-locus -c $output_dir/CONTIGS.db \
+                  -O $output_dir/exported_locus_from_functions \
+                  -n 22,22 \
+                  -s NusB,'Glutamine amidotransferase class-I' \
+                  --overwrite-output-destinations
+
+INFO "Export genomic locus using functional annotation search in flank-mode"
+anvi-export-locus -c $output_dir/CONTIGS.db \
+                  -O $output_dir/exported_locus_from_functions \
+                  --flank-mode  \
+                  -s NusB,rpoz \
+                  --overwrite-output-destinations
+
 
 INFO "Export only Pfam annotations"
 anvi-export-functions -c $output_dir/CONTIGS.db \
@@ -184,8 +208,13 @@ anvi-merge $output_dir/*/PROFILE.db -o $output_dir/SAMPLES-MERGED \
 INFO "Merging profiles without any clustering"
 anvi-merge $output_dir/*/PROFILE.db -o $output_dir/SAMPLES-MERGED-WO-CLUSTERING \
                               -c $output_dir/CONTIGS.db \
-                              --skip-concoct-binning \
                               --skip-hierarchical-clustering
+
+INFO "Importing a collection file into the merged profile"
+anvi-import-collection -c $output_dir/CONTIGS.db \
+                       -p $output_dir/SAMPLES-MERGED/PROFILE.db \
+                       -C CONCOCT \
+                       $files/concoct_mini_test.txt
 
 INFO "Update the description in the merged profile"
 anvi-update-db-description $output_dir/SAMPLES-MERGED/PROFILE.db \
@@ -291,19 +320,12 @@ INFO "Deleting the collection 'CONTIGS_RE_IMPORTED'"
 anvi-delete-collection -p $output_dir/SAMPLES-MERGED/PROFILE.db \
                        -C CONTIGS_RE_IMPORTED
 
-INFO "Use CONCOCT to cluster splits in the merged profile and export as a text file..."
-anvi-cluster-with-concoct -p $output_dir/SAMPLES-MERGED/PROFILE.db \
-                          -c $output_dir/CONTIGS.db \
-                          -o $output_dir/anvio_concoct_clusters.txt \
-                          --collection-name 'cmdline_concoct'
 
-INFO "Recover short reads for Bin_2 in CONCOCT collection and store them in a FASTA file"
-anvi-get-short-reads-from-bam -p $output_dir/SAMPLES-MERGED/PROFILE.db \
-                              -c $output_dir/CONTIGS.db \
-                              -C CONCOCT \
-                              -b Bin_2 \
-                              -o $output_dir/short_reads_for_Bin_2.fasta \
-                              $output_dir/*bam
+INFO "Importing 'cmdline_concoct' collection file into the merged profile"
+anvi-import-collection -c $output_dir/CONTIGS.db \
+                       -p $output_dir/SAMPLES-MERGED/PROFILE.db \
+                       -C cmdline_concoct \
+                       $files/concoct_mini_test.txt
 
 INFO "Rename bins in collection 'cmdline_concoct' using SCG averages"
 anvi-rename-bins -c $output_dir/CONTIGS.db \
@@ -507,7 +529,7 @@ anvi-get-short-reads-mapping-to-a-gene -c $output_dir/CONTIGS.db \
                                        --gene-caller-id 38 \
                                        --leeway 100 \
                                        -i $output_dir/*bam \
-                                       -o $output_dir/reads-mapping-to-gene-id-38.fa
+                                       -O $output_dir/reads-mapping-to
 
 INFO "Get AA counts for the entire contigs database"
 anvi-get-aa-counts -c $output_dir/CONTIGS.db \
@@ -593,10 +615,10 @@ anvi-mcg-classifier -p $output_dir/SAMPLES-MERGED/PROFILE.db \
                     -C CONCOCT \
                     -b Bin_1 \
                     --exclude-samples $files/samples_to_exclude_for_mcg.txt
-# 
+#
 # INFO "Running anvi-mcg-classifier on a collection"
 # anvi-mcg-classifier -p $output_dir/SAMPLES-MERGED/PROFILE.db -c $output_dir/CONTIGS.db -O $output_dir/MCG_CLASSIFIER_OUTPUTS/MCG_CONCOCT -C CONCOCT
-# 
+#
 INFO 'A dry run with an items order file for the merged profile without any clustering'
 anvi-interactive -p $output_dir/SAMPLES-MERGED/PROFILE.db \
                  -c $output_dir/CONTIGS.db \

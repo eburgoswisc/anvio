@@ -172,6 +172,30 @@ def rev_comp_gene_calls_dict(gene_calls_dict, contig_sequence):
     return reverse_complemented_gene_calls, gene_caller_id_conversion_dict
 
 
+def serialize_args(args, single_dash=False, use_underscore=False, skip_keys=None, translate=None):
+    cmdline = []
+    for param, value in args.__dict__.items():
+        if isinstance(skip_keys, list):
+            if param in skip_keys:
+                continue
+
+        if param in translate:
+            param = translate[param]
+        
+        dash = '-' if single_dash else '--'
+
+        if not use_underscore:
+            param = param.replace('_', '-')
+
+        if value is True:
+            cmdline.append('%s%s' % (dash, param))
+        elif value is not False and value is not None:
+            cmdline.append('%s%s' % (dash, param))
+            cmdline.append(str(value))
+
+    return cmdline
+
+
 def get_predicted_type_of_items_in_a_dict(d, key):
     """Gets a dictionary `d` and a `key` in it, and returns a type function.
 
@@ -182,7 +206,7 @@ def get_predicted_type_of_items_in_a_dict(d, key):
              (...),
             }
 
-    This is a shitty funciton, but there was a real need for it, so here we are :/
+    This is a shitty function, but there was a real need for it, so here we are :/
     """
 
     items = [x[key] for x in d.values()]
@@ -349,6 +373,8 @@ def gzip_decompress_file(input_file_path, output_file_path=None, keep_original=T
 
     if not keep_original:
         os.remove(input_file_path)
+
+    return output_file_path
 
 
 def run_command(cmdline, log_file_path, first_line_of_log_is_cmdline=True, remove_log_file_if_exists=True):
@@ -566,6 +592,45 @@ def transpose_tab_delimited_file(input_file_path, output_file_path):
     output_file.close()
 
     return output_file_path
+
+
+def split_fasta(input_file_path, parts=1, prefix=None):
+    if not prefix:
+        prefix = os.path.abspath(input_file_path)
+
+    filesnpaths.is_file_exists(input_file_path)
+    filesnpaths.is_file_fasta_formatted(input_file_path)
+
+    source = u.ReadFasta(input_file_path, quiet=True)
+    length = len(source.ids)
+    
+    if length < parts:
+        parts = length
+
+    chunk_size = length // parts
+
+    output_files = []
+
+    for part_no in range(parts):
+        output_file = prefix + '.' + str(part_no)
+        
+        output_fasta = u.FastaOutput(output_file)
+
+        chunk_start = chunk_size * part_no
+        chunk_end   = chunk_start + chunk_size
+
+        if (part_no + 1 == parts):
+            # if this is the last chunk make sure it contains everything till end.
+            chunk_end = length
+
+        for i in range(chunk_start, chunk_end):
+            output_fasta.write_id(source.ids[i])
+            output_fasta.write_seq(source.sequences[i])
+
+        output_fasta.close()
+        output_files.append(output_file)
+
+    return output_files
 
 
 def get_random_colors_dict(keys):
@@ -786,6 +851,18 @@ def apply_and_concat(df, fields, func, column_names, func_args=tuple([])):
     return pd.concat((df, df2), axis=1, sort=True)
 
 
+def get_required_packages_for_enrichment_test():
+    ''' Return a dict with the packages as keys and installation instrucstions as values'''
+    packages = ["tidyverse", "magrittr", "qvalue", "optparse"]
+
+    installation_instructions = ["conda install -c r r-tidyverse",
+                                 "conda install -c bioconda r-magrittr",
+                                 "conda install -c bioconda bioconductor-qvalue",
+                                 "conda install -c conda-forge r-optparse"]
+
+    return dict(zip(packages,installation_instructions))
+
+
 def get_values_of_gene_level_coverage_stats_as_dict(gene_level_coverage_stats_dict, key, genes_of_interest=None, samples_of_interest=None, as_pandas=False):
     """
         This function takes the gene_level_coverage_stats_dict and return one of the values
@@ -849,6 +926,31 @@ def get_gene_caller_ids_from_args(gene_caller_ids, delimiter):
         raise ConfigError("The gene calls you provided do not look like gene callers anvi'o is used to working with :/ Here is\
                            one of them: '%s' (%s)." % (g, type(g)))
     return gene_caller_ids_set
+
+
+def remove_sequences_with_only_gaps_from_fasta(input_file_path, output_file_path, inplace=True):
+    filesnpaths.is_file_fasta_formatted(input_file_path)
+    filesnpaths.is_output_file_writable(output_file_path)
+
+    total_num_sequences = 0
+    num_sequences_removed = 0
+    input_fasta = u.SequenceSource(input_file_path)
+    clean_fasta = u.FastaOutput(output_file_path)
+
+    while next(input_fasta):
+        total_num_sequences += 1
+        if input_fasta.seq.count('-') == len(input_fasta.seq):
+            num_sequences_removed += 1
+        else:
+            clean_fasta.store(input_fasta, split=False)
+
+    if inplace:
+        if num_sequences_removed:
+            shutil.move(output_file_path, input_file_path)
+        else:
+            os.remove(output_file_path)
+
+    return total_num_sequences, num_sequences_removed
 
 
 def get_all_ids_from_fasta(input_file):
@@ -955,14 +1057,17 @@ def get_time_to_date(local_time, fmt='%Y-%m-%d %H:%M:%S'):
     return time.strftime(fmt, time.localtime(local_time))
 
 
-def concatenate_files(dest_file, file_list):
+def concatenate_files(dest_file, file_list, remove_concatenated_files=False):
     if not dest_file:
         raise ConfigError("Destination cannot be empty.")
+
+    filesnpaths.is_output_file_writable(dest_file)
+
     if not len(file_list):
         raise ConfigError("File list cannot be empty.")
+
     for f in file_list:
         filesnpaths.is_file_exists(f)
-    filesnpaths.is_output_file_writable(dest_file)
 
     dest_file_obj = open(dest_file, 'w')
     for chunk_path in file_list:
@@ -970,11 +1075,16 @@ def concatenate_files(dest_file, file_list):
             dest_file_obj.write(line)
 
     dest_file_obj.close()
+
+    if remove_concatenated_files:
+        for f in file_list:
+            os.remove(f)
+
     return dest_file
 
 
 def get_split_start_stops(contig_length, split_length, gene_start_stops=None):
-    """Wrapper funciton for get_split_start_stops_with_gene_calls and get_split_start_stops_without_gene_calls"""
+    """Wrapper function for get_split_start_stops_with_gene_calls and get_split_start_stops_without_gene_calls"""
     if gene_start_stops:
         return get_split_start_stops_with_gene_calls(contig_length, split_length, gene_start_stops)
     else:
@@ -1090,11 +1200,11 @@ def get_split_and_contig_names_of_interest(contigs_db_path, gene_caller_ids):
 
     where_clause_contigs = "parent in (%s)" % ', '.join(['"%s"' % c for c in contig_names_of_interest])
     splits_info = contigs_db.get_some_rows_from_table_as_dict(t.splits_info_table_name, where_clause=where_clause_contigs)
-    split_names_of_ineterest = set(splits_info.keys())
+    split_names_of_interest = set(splits_info.keys())
 
     contigs_db.disconnect()
 
-    return (split_names_of_ineterest, contig_names_of_interest)
+    return (split_names_of_interest, contig_names_of_interest)
 
 
 def get_contigs_splits_dict(split_ids, splits_basic_info):
@@ -1413,6 +1523,72 @@ def check_contig_names(contig_names, dont_raise=False):
     return True
 
 
+def create_fasta_dir_from_sequence_sources(genome_desc, fasta_txt=None):
+    """genome_desc is an instance of GenomeDescriptions"""
+    if genome_desc is None and fasta_txt is None:
+        raise ConfigError("Anvi'o was given no internal genomes, no external genomes, and no fasta\
+                          files. Although anvi'o can technically go ahead and create a temporary\
+                          FASTA directory, what's the point if there's nothing to do?")
+
+    temp_dir = filesnpaths.get_temp_directory_path()
+    hash_to_name = {}
+    genome_names = set([])
+    file_paths = set([])
+    if genome_desc is not None:
+        for genome_name in genome_desc.genomes:
+            genome_names.add(genome_name)
+            contigs_db_path = genome_desc.genomes[genome_name]['contigs_db_path']
+            hash_for_output_file = hashlib.sha256(genome_name.encode('utf-8')).hexdigest()
+            hash_to_name[hash_for_output_file] = genome_name
+
+            path = os.path.join(temp_dir, hash_for_output_file + '.fa')
+            file_paths.add(path)
+
+            if 'bin_id' in genome_desc.genomes[genome_name]:
+                # Internal genome
+                bin_id = genome_desc.genomes[genome_name]['bin_id']
+                collection_id = genome_desc.genomes[genome_name]['collection_id']
+                profile_db_path = genome_desc.genomes[genome_name]['profile_db_path']
+
+                class Args: None
+                summary_args = Args()
+
+                summary_args.profile_db = profile_db_path
+                summary_args.contigs_db = contigs_db_path
+                summary_args.collection_name = collection_id
+                summary_args.quick = True
+
+                summary = anvio.summarizer.ProfileSummarizer(summary_args, r=Run(verbose=False))
+                summary.init()
+
+                bin_summary = anvio.summarizer.Bin(summary, bin_id)
+
+                with open(path, 'w') as fasta:
+                    fasta.write(bin_summary.get_bin_sequence())
+            else:
+                # External genome
+                export_sequences_from_contigs_db(contigs_db_path, path)
+
+    if fasta_txt is not None:
+        fastas = get_TAB_delimited_file_as_dictionary(fasta_txt, expected_fields=['name', 'path'], only_expected_fields=True)
+        for name in fastas.keys():
+            genome_names.add(name)
+            hash_for_output_file = hashlib.sha256(name.encode('utf-8')).hexdigest()
+            hash_to_name[hash_for_output_file] = name
+
+            source = fastas[name]['path']
+            path = os.path.join(temp_dir, hash_for_output_file + '.fa')
+            file_paths.add(path)
+
+            with open(path, 'w') as dest:
+                with open(source, 'r') as src:
+                    dest.write(src.read())
+
+    path_dict = dict(zip(genome_names, file_paths))
+
+    return temp_dir, hash_to_name, genome_names, path_dict
+
+
 def get_FASTA_file_as_dictionary(file_path):
     filesnpaths.is_file_exists(file_path)
     filesnpaths.is_file_fasta_formatted(file_path)
@@ -1699,8 +1875,12 @@ def is_ascii_only(text):
 def get_TAB_delimited_file_as_dictionary(file_path, expected_fields=None, dict_to_append=None, column_names=None,\
                                         column_mapping=None, indexing_field=0, separator='\t', no_header=False,\
                                         ascii_only=False, only_expected_fields=False, assign_none_for_missing=False,\
-                                        none_value=None, empty_header_columns_are_OK=False):
-    """Takes a file path, returns a dictionary."""
+                                        none_value=None, empty_header_columns_are_OK=False, return_failed_lines=False):
+    """Takes a file path, returns a dictionary.
+
+       - If `return_failed_lines` is True, it the function will not throw an exception, but instead
+         return a list of `failed_lines` along with a dictionary of final results.
+    """
 
     if expected_fields and (not isinstance(expected_fields, list) and not isinstance(expected_fields, set)):
         raise ConfigError("'expected_fields' variable must be a list (or a set).")
@@ -1713,6 +1893,9 @@ def get_TAB_delimited_file_as_dictionary(file_path, expected_fields=None, dict_t
 
     filesnpaths.is_file_plain_text(file_path)
     filesnpaths.is_file_tab_delimited(file_path, separator=separator)
+
+    failed_lines = []
+    column_mapping_for_line_failed = None
 
     f = open(file_path, 'rU')
 
@@ -1755,7 +1938,7 @@ def get_TAB_delimited_file_as_dictionary(file_path, expected_fields=None, dict_t
             if field not in expected_fields:
                 raise ConfigError("There are more fields in the file '%s' than the expected fields :/\
                                    Anvi'o is telling you about this because get_TAB_delimited_file_as_dictionary\
-                                   funciton is called with `only_expected_fields` flag turned on." % (file_path))
+                                   function is called with `only_expected_fields` flag turned on." % (file_path))
 
     d = {}
     line_counter = 0
@@ -1773,6 +1956,7 @@ def get_TAB_delimited_file_as_dictionary(file_path, expected_fields=None, dict_t
                                seem right at all :/" % (line_counter + 1, file_path))
 
         if column_mapping:
+            column_mapping_for_line_failed = False
             updated_line_fields = []
             for i in range(0, len(line_fields)):
                 try:
@@ -1781,15 +1965,31 @@ def get_TAB_delimited_file_as_dictionary(file_path, expected_fields=None, dict_t
                     else:
                         updated_line_fields.append(column_mapping[i](line_fields[i]))
                 except NameError:
-                    raise ConfigError("Mapping function '%s' did not work on value '%s'. These functions can be native\
-                                        Python functions, such as 'str', 'int', or 'float', or anonymous functions\
-                                        defined using lambda notation." % (column_mapping[i], line_fields[i]))
+                    if return_failed_lines:
+                        failed_lines.append(line_counter + 1)
+                        column_mapping_for_line_failed = True
+                    else:
+                        raise ConfigError("Mapping function '%s' did not work on value '%s'. These functions can be native\
+                                           Python functions, such as 'str', 'int', or 'float', or anonymous functions\
+                                           defined using lambda notation." % (column_mapping[i], line_fields[i]))
                 except TypeError:
-                    raise ConfigError("Mapping function '%s' does not seem to be a proper Python function :/" % column_mapping[i])
+                    if return_failed_lines:
+                        failed_lines.append(line_counter + 1)
+                        column_mapping_for_line_failed = True
+                    else:
+                        raise ConfigError("Mapping function '%s' does not seem to be a proper Python function :/" % column_mapping[i])
                 except ValueError:
-                    raise ConfigError("Mapping funciton '%s' did not like the value '%s' in column number %d\
-                                        of the input matrix '%s' :/" % (column_mapping[i], line_fields[i], i + 1, file_path))
+                    if return_failed_lines:
+                        failed_lines.append(line_counter + 1)
+                        column_mapping_for_line_failed = True
+                    else:
+                        raise ConfigError("Mapping function '%s' did not like the value '%s' in column number %d\
+                                           of the input matrix '%s' :/" % (column_mapping[i], line_fields[i], i + 1, file_path))
+
             line_fields = updated_line_fields
+
+        if column_mapping_for_line_failed:
+            continue
 
         if indexing_field == -1:
             entry_name = 'line__%09d__' % line_counter
@@ -1797,8 +1997,11 @@ def get_TAB_delimited_file_as_dictionary(file_path, expected_fields=None, dict_t
             entry_name = line_fields[indexing_field]
 
         if entry_name in d:
-            raise ConfigError("The entry name %s appears twice in the TAB-delimited file '%s'. We don't think that you did that purposefully \
-                               (if you think this should be Ok, then feel free to contact us)." % (entry_name, file_path))
+            raise ConfigError("The entry name %s appears more than once in the TAB-delimited file '%s'. We assume that you\
+                               did not do it that purposefully, but if you need this file in this form, then feel free to\
+                               contact us so we can try to find a solution for you. But if you have gotten this error while\
+                               working with HMMs, do not contact us since helping you in that case is beyond us (see the issue\
+                               #1206 for details))." % (entry_name, file_path))
 
         d[entry_name] = {}
 
@@ -1833,6 +2036,10 @@ def get_TAB_delimited_file_as_dictionary(file_path, expected_fields=None, dict_t
                     dict_to_append[entry][key] = d[entry][key]
 
         return dict_to_append
+
+    # this is here for backward compatibility.
+    if return_failed_lines:
+        return d, failed_lines
 
     return d
 
@@ -2305,46 +2512,19 @@ def is_blank_profile(db_path):
     return True if blank == 1 else False
 
 
-def get_two_sample_z_test_statistic(p1, p2, n1, n2):
+def get_enriched_groups(props, reps):
     '''
-        Compute a two sample z-test statistic
-
-        If one group has no hits (e.g. p1=0) then we compute an upper bound
-        for the p-value by pretending that it had one hit.
-
-        If one group has 100% hits (e.g. p1=1) then we compute an upper bound
-        for the p-value by pretending that p1=1-1/n1 hits
+        Accepts a vector of proportions and number of replicates per group and
+        returns a boolean vector where each group that has proportion above
+        the "expected" (i.e. the overall proportion) is True and the rest are False.
     '''
-    import numpy
-    if p1 == 0 and p2 == 0:
-        return (0, 1)
+    import numpy as np
+    # if the function doesn't occur at all then test_statistic is zero and p-value is 1
+    if not np.count_nonzero(props):
+        return np.zeros(len(props))
+    overall_portion = np.sum(np.multiply(props, reps)) / np.sum(reps)
 
-    inequality_sign = p1 > p2
-    # This is done in order to estimate an upper bound
-    # for the p-value
-    p1 = max(p1, 1/n1) # in case p1 is zero
-    p2 = max(p2, 1/n2)
-    p1 = min(p1, 1 - 1/n1) # in case p1 is 1
-    p2 = min(p2, 1 - 1/n2)
-
-    new_inequality_sign = p1 > p2
-    if new_inequality_sign != inequality_sign:
-        # if the portion correction changed the direction of the inequality
-        # then there is no power to this test.
-        # This would only happen when the groups in questions are very small anyway,
-        # but we want to be on the safe side.
-        return (0,1)
-
-    p = (n1*p1 + n2*p2) / (n1 + n2)
-
-    z = (p1 - p2) / numpy.sqrt(p*(1 - p) * (1/n1 + 1/n2))
-    p_value = get_p_value_for_z_test(z)
-    return (z, p_value)
-
-
-def get_p_value_for_z_test(z):
-    from scipy.stats import norm
-    return 2*norm.cdf(-abs(z))
+    return props > overall_portion
 
 
 def is_pan_db(db_path):
@@ -2454,6 +2634,23 @@ def download_file(url, output_file_path, progress=progress, run=run):
     run.info('Downloaded succesfully', output_file_path)
 
 
+def get_remote_file_content(url, gzipped=False):
+    import requests
+    from io import BytesIO
+
+    remote_file = requests.get(url)
+
+    if remote_file.status_code == 404:
+        raise ConfigError("Bad news. The remove file at '%s' was not found :(" % url)
+
+    if gzipped:
+        buf = BytesIO(remote_file.content)
+        fg = gzip.GzipFile(fileobj=buf)
+        return fg.read().decode('utf-8')
+
+    return remote_file.content.decode('utf-8')
+
+
 def download_protein_structures(protein_code_list, output_dir):
     """
     Downloads protein structures using Biopython. protein_code_list is a list
@@ -2555,6 +2752,22 @@ def open_url_in_browser(url, browser_path=None, run=run):
         webbrowser.get('users_preferred_browser').open_new(url)
     else:
         webbrowser.open_new(url)
+
+
+def check_h5py_module():
+    """To make sure we do have the h5py module.
+
+       The reason this function is here is becasue we removed h5py from anvi'o dependencies,
+       but some migration scripts may still need it if the user has very old databases. In
+       those cases the user must install it manually."""
+
+    try:
+        import h5py
+    except:
+        raise ConfigError("Please install the Python module `h5py` manually for this migration task to continue.\
+                           The reason why the standard anvi'o installation did not install module is complicated,\
+                           and really unimportant. If you run `pip install h5py` in your Python virtual environmnet\
+                           for anvi'o, and try running the migration program again things should be alright.")
 
 
 def RepresentsInt(s):

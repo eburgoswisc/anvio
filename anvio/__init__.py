@@ -4,6 +4,7 @@
 """Lots of under-the-rug, operational garbage in here. Run. Run away.."""
 
 import sys
+import json
 import copy
 import platform
 
@@ -11,11 +12,20 @@ import platform
 # unless you want to explode `bottle`:
 import pkg_resources
 
-anvio_version = '5.5-master'
-anvio_codename = 'margaret'
+anvio_version = '6-master'
+anvio_codename = 'esther'
 
 DEBUG = '--debug' in sys.argv
 FORCE = '--force' in sys.argv
+
+def P(d, dont_exit=False):
+    """Poor man's debug output printer during debugging."""
+
+    print(json.dumps(d, indent=2))
+
+    if not dont_exit:
+        sys.exit()
+
 
 # Make sure the Python environment hasn't changed since the installation (happens more often than you'd think
 # on systems working with multiple Python installations that are managed through modules):
@@ -147,6 +157,18 @@ D = {
             ['-f', '--fasta-file'],
             {'metavar': 'FASTA',
              'help': "A FASTA-formatted input file"}
+                ),
+    'fasta-text-file': (
+            ['-f', '--fasta-text-file'],
+            {'metavar': 'FASTA_TEXT_FILE',
+            'dest': 'fasta_text_file',
+            'help': "A two-column TAB-delimited file that lists multiple FASTA files to import\
+                     for analysis. If using for `anvi-dereplicate-genomes` or `anvi-compute-distance`,\
+                     each FASTA is assumed to be a genome. The first item in the header line\
+                     should read 'name', and the second item should read 'fasta_path'. Each line\
+                     in the field should describe a single entry, where the first column is\
+                     the name of the FASTA file or corresponding sequence, and the second column\
+                     is the path to the FASTA file itself."}
                 ),
     'layers-information-file': (
             ['-D', '--layers-information-file'],
@@ -438,44 +460,21 @@ D = {
              'metavar': 'CATEGORY',
              'help': "The additional layers data variable name that divides layers into multiple categories."}
                 ),
-    'min-portion-occurrence-of-function-in-group': (
-            ['-P', '--min-portion-occurrence-of-function-in-group'],
-            {'metavar': 'FLOAT',
-             'default': 0,
-             'type': float,
-             'help': "Takes a value between 0 and 1, where 1 means that only functions that occur in all members of\
-                      one of the compared groups will be included in the output. Default is %(default).1f."}
-                ),
-    'false-detection-rate': (
-            ['--false-detection-rate', '--FDR'],
-            {'metavar': 'FLOAT',
-             'default': 0.05,
-             'type': float,
-             'help': "Takes a value between 0 and 1, to determine the false detection rate that will be used \
-                      for the Benjamini–Hochberg procedure. Default is %(default).1f."}
-                ),
-    'core-threshold': (
-            ['--core-threshold'],
-            {'metavar': 'FLOAT',
-             'default': 1,
-             'type': float,
-             'help': "Takes a value between 0 and 1, where 1 means that only functions occurring in all genomes \
-                     of a group would be considered as core functions of that group. Default is %(default).1f."}
-                ),
-    'min-function-enrichment': (
-            ['-E', '--min-function-enrichment'],
-            {'metavar': 'FLOAT',
-             'default': 0,
-             'type': float,
-             'help': "Only report functions for which the min enrichment is above the provided value. Default is %(default).1f."}
+    'exclude-ungrouped': (
+            ['--exclude-ungrouped'],
+            {'default': False,
+             'action': 'store_true',
+             'help': "Use this flag if you want anvi'o to ignore genomes with no value set for the catergory variable \
+                      (which you specified using --category-variable). By default all variables with no value will be \
+                      considered as a single group when preforming the statistical analysis."}
                 ),
     'functional-occurrence-table-output': (
             ['-F', '--functional-occurrence-table-output'],
             {'metavar': 'FILE',
              'default': None,
              'type': str,
-             'help': "Saves the presence/absence information for functions in genomes in a TAB-delimited format.\
-                      A file name must be provided. To learn more about how the presence/absence is computed, please\
+             'help': "Saves the occurrence frequency information for functions in genomes in a TAB-delimited format.\
+                      A file name must be provided. To learn more about how the functional occurrence is computed, please\
                       refer to the tutorial."}
                 ),
     'table': (
@@ -519,6 +518,97 @@ D = {
              'choices': tables.taxon_names_table_structure[1:],
              'help': "The taxonomic level to use. The default is '%(default)s'. Only relevant if the\
                       anvi'o ontigs database contains taxonomic annotations."}
+                ),
+    'taxonomy-file': (
+            ['-t', '--taxonomy-file'],
+            {'default': None,
+             'type': str,
+             'help': "Path to The taxonomy file format tsv containe:\
+              ID\td__domaine;p__phylum;[..];s__genus species"}
+                ),
+    'metagenome-mode': (
+            ['-m', '--metagenome-mode'],
+            {'default': False,
+             'action': 'store_true',
+             'help': "Treat a given contigs database as a metagenome rather than treating it as a single genome."}
+                ),
+    'scg-name-for-metagenome-mode': (
+            ['-S','--scg-name-for-metagenome-mode'],
+            {'default': None,
+             'type': str,
+             'metavar': 'SCG_NAME',
+             'help': "When running in metagenome mode, anvi'o automatically chooses the most frequent single-copy\
+                      core gene to estimate the taxonomic composition within a contigs database. If you have a\
+                      different preference you can use this parameter to communicate that."}
+                ),
+    'compute-scg-coverages': (
+            ['--compute-scg-coverages'],
+            {'default': False,
+             'action': 'store_true',
+             'help': "When this flag is declared, anvi'o will go back to the profile database to learn coverage\
+                      statistics of single-copy core genes for which we have taxonomy information."}
+                ),
+    'update-profile-db-with-taxonomy': (
+            ['--update-profile-db-with-taxonomy'],
+            {'default': False,
+             'action': 'store_true',
+             'help': "When anvi'o knows all both taxonomic affiliations and coverages across samples for single-copy\
+                      core genes, it can, in theory add this information to the profile database. With this flag you\
+                      can isntruct anvi'o to do that and find information on taxonomy in the `layers` tab of your\
+                      interactive interface."}
+                ),
+    'taxonomy-database': (
+            ['-r', '--taxonomy-database'],
+            {'default': None,
+             'type': str,
+             'metavar': 'PATH',
+             'help': "Path to the directory that contains the BLAST databases for single-copy core\
+                      genes. You will almost never need to use this parameter unless you are\
+                      trying something very fancy. Anvi'o will know where its database files are."}
+                ),
+    'scgs-taxonomy-data-dir': (
+            ['--scgs-taxonomy-data-dir'],
+            {'default': None,
+             'type': str,
+             'metavar': 'PATH',
+             'help': "The directory for SCGs data to be stored (or read from, depending on the context).\
+                      If you leave it as is without specifying anything, anvi'o will set up everything in\
+                      (or try to read things from) a pre-defined default directory. The advantage of using\
+                      the default directory at the time of set up is that every user of anvi'o on a computer\
+                      system will be using a single data directory, but then you may need to run the setup\
+                      program with superuser privileges. If you don't have superuser privileges, then you can\
+                      use this parameter to tell anvi'o the location you wish to use to setup your databases.\
+                      If you are using a program (such as `anvi-run-scg-taxonomy` or `anvi-estimate-genome-taxonomy`)\
+                      you will have to use this parameter to tell those programs where your data are."}
+                ),
+    'scgs-taxonomy-remote-database-url': (
+            ['--scgs-taxonomy-remote-database-url'],
+            {'default': None,
+             'type': str,
+             'metavar': 'URL',
+             'help': "Anvi'o will always try to download the latest release, but if there is a problem with\
+                      the latest release, feel free to run setup using a different URL. Just to note, anvi'o\
+                      will expect to find the following files in the URL provided here: 'VERSION', \
+                      'ar122_msa_individual_genes.tar.gz', 'ar122_taxonomy.tsv', 'bac120_msa_individual_genes.tar.gz', \
+                      and 'bac120_taxonomy.tsv'. If everything fails, you can give this URL, which is supposed to work\
+                      if teh server in which these databases are maintained is still online:\
+                      https://data.ace.uq.edu.au/public/gtdb/data/releases/release89/89.0/"}
+                ),
+    'reset': (
+            ['--reset'],
+            {'default': False,
+             'action': 'store_true',
+             'help': "Remove all the previously stored files and start over. If something is feels wrong\
+                      for some reason and if you believe re-downloading files and setting them up could\
+                      address the issue, this is the flag that will tell anvi'o to act like a real comptuer\
+                      scientist challenged with a computational problem."}
+                ),
+    'redo-databases': (
+            ['--redo-databases'],
+            {'default': False,
+             'action': 'store_true',
+             'help': "Remove existing databases and re-create them. This can be necessary when versions of\
+                      programs change and databases they create and use become incompatible."}
                 ),
     'cog-data-dir': (
             ['--cog-data-dir'],
@@ -589,6 +679,18 @@ D = {
             {'default': False,
              'action': 'store_true',
              'help': "List available functional annotation sources."}
+                ),
+    'include-gc-identity-as-function': (
+            ['--include-gc-identity-as-function'],
+            {'default': False,
+             'action': 'store_true',
+             'help': "This is an option that asks anvi'o to treat gene cluster names as functions. By\
+                      doing so, you are in fact creating an opportunity to study functional enrichment\
+                      statistics for each gene cluster independently. For instance, multiple gene\
+                      clusters may have the same COG function. But if you wish to use the same enrichment\
+                      analysis in your pangenome without collapsing multiple gene clusters into a single\
+                      function name, you can use this flag, and ask for 'IDENTITY' as the functional\
+                      annotation source."}
                 ),
     'gene-names': (
             ['--gene-names'],
@@ -699,7 +801,7 @@ D = {
              'type': float,
              'help': "This filter will remove gene clusters from your report. If you say '--min-functional-homogeneity-index 0.3', \
                       every gene cluster with a functional homogeneity index less than 0.3 will be removed from your analysis. This \
-                      can be useful if you only want to look at gene clusters that are highly conserved in resulting funciton"}
+                      can be useful if you only want to look at gene clusters that are highly conserved in resulting function"}
                 ),
     'max-functional-homogeneity-index': (
             ['--max-functional-homogeneity-index'],
@@ -832,6 +934,29 @@ D = {
                       filtering criteria. In other programs, you may get everything, nothing, or an error. It really depends\
                       on the situation. Fortunately, mistakes are cheap, so it's worth a try."}
                 ),
+    'flank-mode': (
+            ['--flank-mode'],
+            {'action': 'store_true',
+             'help': "If in --flank-mode, anvi-export-locus will extract a locus based on the coordinates \
+                     of flanking genes. You MUST provide 2 flanking genes in the form of TWO \
+                     --search-term, --gene-caller-ids, or --hmm-sources. The --flank-mode option is  \
+                     appropriate for extracting loci of variable gene number lengths, but are consistantly \
+                     located between the same flanking genes in the genome(s) of interest."}
+              ),
+    'num-genes': (
+            ['-n','--num-genes'],
+            {'metavar': 'NUM_GENES',
+             'type': str,
+             'help': "Required for DEFAULT mode. For each match (to the function, or HMM that was searched) a sequence which includes \
+                      a block of genes will be saved. The block could include either genes only in the forward direction of the gene (defined \
+                      according to the direction of transcription of the gene) or reverse or both. \
+                      If you wish to get both direction use a comma (no spaces) to define the block \
+                      For example, \"-n 4,5\" will give you four genes before and five genes after. \
+                      Whereas, \"-n 5\" will give you five genes after (in addition to the gene that matched). \
+                      To get only genes preceeding the match use \"-n 5,0\". \
+                      If the number of genes requested exceeds the length of the contig, then the output \
+                      will include the sequence until the end of the contig."}
+              ),
     'gene-mode': (
             ['--gene-mode'],
             {'default': False,
@@ -1099,6 +1224,15 @@ D = {
                       be careful with this option if you are running your commands on a SGE --if you are clusterizing your runs,\
                       and asking for multiple threads to use, you may deplete your resources very fast."}
                 ),
+    'num-parallel-processes': (
+            ['-P', '--num-parallel-processes'],
+            {'metavar': 'NUM_PROCESSES',
+             'default': 1,
+             'type': int,
+             'help': "Maximum number of processes to run in parallel. Please note that this is different than number of threads. If you\
+                      ask for 4 parallel processes, and 5 threads, anvi'o will run four processes in parallel and assign 5 threads\
+                      to each. For resource allocation you must multiply the number of processes and threads."}
+                ),
     'variability-profile': (
             ['-V', '--variability-profile'],
             {'metavar': 'VARIABILITY_TABLE',
@@ -1191,6 +1325,13 @@ D = {
              'metavar': 'ENGINE',
              'type': str,
              'help': "Varaibility engine. The default is '%(default)s'."}
+                ),
+    'driver': (
+            ['--driver'],
+            {'metavar': 'DRIVER',
+             'type': str,
+             'required': True,
+             'help': "Automatic binning drivers. Available options '%(choices)s'."}
                 ),
     'skip-synonymity': (
             ['--skip-synonymity'],
@@ -1324,20 +1465,6 @@ D = {
              'action': 'store_true',
              'help': "Don't bother me with questions or warnings, just do it."}
                 ),
-    'force': (
-            ['--force'],
-            {'default': False,
-             'action': 'store_true',
-             'help': "Please note that using the --force flag is not using 'the force'. It's forcing things.\
-                      If anvi'o suggested you to use this flag, things must be very very bad. This flag is\
-                      only used when the user wants to skip checks and balances and try their chances with\
-                      by pushing things through. This flag will tell anvi'o to not pay attention to some\
-                      critical things that are in place to ensure the sanity of your analyses. But if you\
-                      feel like a power user today and wnat to give it a try, go ahead. But please make\
-                      extra sure if you run into problem downstream and need help that you are a power user\
-                      and should be fine. BRUTE FORCE ALMOST NEVER WORKS AND IF ANVI'O IS FAILING TO DO\
-                      SOMETHING IT MEANS THERE IS A BIGGER PROBLEM NEEDS ADRESSING."}
-                ),
     'ip-address': (
             ['-I', '--ip-address'],
             {'metavar': 'IP_ADDR',
@@ -1436,6 +1563,71 @@ D = {
              'type': float,
              'help': "Minimum percent identity. The default is %(default)g."}
                 ),
+    'min-full-percent-identity': (
+            ['--min-full-percent-identity'],
+            {'metavar': 'FULL_PERCENT_IDENTITY',
+             'default': 20.0,
+             'type': float,
+             'help': "In some cases you may get high raw ANI estimates (percent identity scores)\
+                      between two genomes that have little to do with each other simply because only\
+                      a small fraction of their content may be aligned. This can be partly\
+                      alleviated by considering the *full* percent identity, which includes in its\
+                      calculation regions that did not align. For example, if the alignment is a\
+                      whopping 97 percent identity but only 8 percent of the genome aligned, the *full*\
+                      percent identity is 0.970 * 0.080 = 0.078 OR 7.8 percent. *full* percent\
+                      identity is always included in the report, but you can also use it as a filter\
+                      for other metrics, such as percent identity. This filter will set all ANI\
+                      measures between two genomes to 0 if the *full* percent identity is less than\
+                      you deem trustable. When you set a value, anvi'o will go through the ANI\
+                      results, and set all ANI measures between two genomes to 0 if the *full*\
+                      percent identity *between either of them* is less than the parameter described\
+                      here. The default is %(default)g."}
+                ),
+    'use-full-percent-identity': (
+            ['--use-full-percent-identity'],
+            {'action': 'store_true',
+             'help': "Usually, percent identity is calculated only over aligned regions, and this\
+                      is what is used as a distance metric by default. But with this flag,\
+                      you can instead use the *full* percent identity as the distance metric. It is the\
+                      same as percent identity, except that regions that did not align are included\
+                      in the calculation. This means *full* percent identity will always be less than or\
+                      equal to percent identity. How is it calculated? Well if P is the percentage identity\
+                      calculated in aligned regions, L is the length of the genome, and A is the fraction\
+                      of the genome that aligned to a compared genome, the full percent identity is\
+                      P * (A/L). In other words, it is the percent identity multiplied by the alignment\
+                      coverage. For example, if the alignment is a whopping 97 percent identity but\
+                      only 8 percent of the genome aligned, the *full* percent identity is 0.970 * 0.080\
+                      = 0.078, which is just 7.8 percent."}
+                ),
+    'min-alignment-fraction': (
+            ['--min-alignment-fraction'],
+            {'default': 0.0,
+             'metavar': 'NUM',
+             'type': float,
+             'help': "In some cases you may get high raw ANI estimates\
+                      (percent identity scores) between two genomes that have little to do with each other\
+                      simply because only a small fraction of their content may be aligned. This filter will\
+                      set all ANI scores between two genomes to 0 if the alignment fraction is less than you\
+                      deem trustable. When you set a value, anvi'o will go through the ANI results, and set\
+                      percent identity scores between two genomes to 0 if the alignment fraction *between either\
+                      of them* is less than the parameter described here. The default is %(default)g."}
+                ),
+    'significant-alignment-length': (
+            ['--significant-alignment-length'],
+            {'default': None,
+             'metavar': 'INT',
+             'type': int,
+             'help': "So --min-alignment-fraction\
+                      discards any hit that is coming from alignments that represent shorter fractions of genomes,\
+                      but what if you still don't want to miss an alignment that is longer than an X number of\
+                      nucleotides regardless of what fraction of the genome it represents? Well, this parameter is\
+                      to recover things that may be lost due to --min-alignment-fraction parameter. Let's say,\
+                      if you set --min-alignment-fraction to '0.05', and this parameter to '5000', anvi'o will keep\
+                      hits from alignments that are longer than 5000 nts, EVEN IF THEY REPRESENT less than 5 percent of\
+                      a given genome pair. Basically if --min-alignment-fraction is your shield to protect yourself\
+                      from incoming garbage, --significant-alignment-length is your chopstick to pick out those that\
+                      may be interesting, and you are a true warrior here."}
+                ),
     'bins-info': (
             ['--bins-info'],
             {'metavar': 'BINS_INFO',
@@ -1523,15 +1715,6 @@ D = {
                       behavior is to not cluster contigs for individual runs. However, if you are\
                       planning to do binning on one sample, you must use this flag to tell anvio to\
                       run cluster configurations for single runs on your sample."}
-                ),
-    'skip-concoct-binning': (
-            ['--skip-concoct-binning'],
-            {'default': False,
-             'action': 'store_true',
-             'help': "Anvi'o uses CONCOCT (Alneberg et al.) by default for unsupervised genome binning\
-                      for merged runs. CONCOCT results are stored in the profile database, which then\
-                      can be used from within appropriate interfaces (i.e., anvi-interactive, anvi-summary,\
-                      etc). Use this flag if you would like to skip this step"}
                 ),
     'num-clusters-requested': (
             ['--num-clusters-requested'],

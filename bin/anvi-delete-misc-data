@@ -18,6 +18,7 @@ __credits__ = []
 __license__ = "GPL 3.0"
 __version__ = anvio.__version__
 __email__ = "a.murat.eren@gmail.com"
+__description__ = "Remove stuff from additional data or order tables in pan or profile databases for items or layers"
 
 
 run = terminal.Run()
@@ -31,18 +32,24 @@ def main(args):
         sys.exit(0)
 
     keys_to_remove = [k.strip() for k in args.keys_to_remove.split(',')] if args.keys_to_remove else []
+    groups_to_remove = [k.strip() for k in args.groups_to_remove.split(',')] if args.groups_to_remove else []
 
-    table_for_additional_data.remove(data_keys_list = keys_to_remove)
+    table_for_additional_data.remove(data_keys_list=keys_to_remove, data_groups_list=groups_to_remove)
 
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description="Remove stuff from additional data or order tables in pan or profile databases for items or layers")
+    parser = argparse.ArgumentParser(description=__description__)
 
     parser.add_argument(*anvio.A('pan-or-profile-db'), **anvio.K('pan-or-profile-db'))
     parser.add_argument(*anvio.A('target-data-table'), **anvio.K('target-data-table', {'required': True}))
     parser.add_argument('--keys-to-remove', help="A comma-separated list of data keys to remove from the database. If you\
                                                   do not use this parameter, anvi'o will simply remove everything from the\
-                                                  target data table immediately.")
+                                                  target data table immediately. Please note that you should not use this\
+                                                  parameter together with `--groups-to-remove` in a single command.")
+    parser.add_argument('--groups-to-remove', help="A comma-separated list of data groups to remove from the database. If you\
+                                                  do not use this parameter, anvi'o will simply remove everything from the\
+                                                  target data table immediately. Please note that you should not use this\
+                                                  parameter together with `--keys-to-remove` in a single command.")
     parser.add_argument('--list-available-keys', action='store_true', help="Using this flag will list available data keys in\
                                                   the target data table and quit without doing anything else.")
     parser.add_argument(*anvio.A('just-do-it'), **anvio.K('just-do-it'))

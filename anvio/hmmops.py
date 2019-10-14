@@ -60,6 +60,7 @@ class SequencesForHMMHits:
            not accessing a large fraction of a given contigs database.
         """
 
+        utils.is_contigs_db(contigs_db_path)
         contigs_db = db.DB(contigs_db_path, anvio.__contigs__version__)
         self.hmm_hits_info = contigs_db.get_table_as_dict(t.hmm_hits_info_table_name)
 
@@ -132,7 +133,6 @@ class SequencesForHMMHits:
 
         self.progress.update('Recovering split and contig names for %d genes' % (len(gene_caller_ids_of_interest)))
         split_names_of_interest, contig_names_of_interest = utils.get_split_and_contig_names_of_interest(contigs_db_path, gene_caller_ids_of_interest)
-
 
         self.progress.update('Recovering contig seqs for %d genes' % (len(gene_caller_ids_of_interest)))
         where_clause_for_contigs = "contig in (%s)" % ', '.join(['"%s"' % s for s in contig_names_of_interest])
@@ -305,7 +305,7 @@ class SequencesForHMMHits:
                     ...
                 }
 
-            This function will return DNA seqeunces by default. If `return_amino_acid_sequences` parameter
+            This function will return DNA sequences by default. If `return_amino_acid_sequences` parameter
             is True, it will return AA sequences instead.
 
             `return_best_hit=True` will filter the resulting dictionary to remove weak hits if there are more
@@ -498,7 +498,7 @@ class SequencesForHMMHits:
 
         genes_to_keep = all_genes.difference(genes_to_remove)
 
-        self.run.info_single("Hi! The anvi'o funciton that was supposed to remove genes that were occurring in\
+        self.run.info_single("Hi! The anvi'o function that was supposed to remove genes that were occurring in\
                               less than X number of bins due to the use of `--min-num-bins-gene-occurs` is \
                               speaking. What follows is a report of what happened after anvi'o tried to remove\
                               genes that were occurring in at least %d of the %d bins you had at this point." \

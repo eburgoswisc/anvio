@@ -18,6 +18,8 @@
  * @license GPL-3.0+ <http://opensource.org/licenses/GPL-3.0>
  */
 
+ const MAX_HISTORY_SIZE = 50;
+
 
 function Bins(prefix, container) {
     this.selections = {}
@@ -27,10 +29,18 @@ function Bins(prefix, container) {
     this.container = container || document.createElement("div");
 
     this.cache = {
-        'completeness': {}
+        'completeness': {},
+        'taxonomy': {},
     };
 
+    this.keepHistory = false;
+    this.allowRedraw = true;
+
+    this.history = [];
+    this.future = [];
+
     document.body.addEventListener('bin-settings-changed', (event) => this.RedrawBins());
+    $(document).on('sorted', () => { this.BinsSorted(); });
 };
 
 
@@ -65,10 +75,12 @@ Bins.prototype.NewBin = function(id, binState) {
         var redundancy = "---";
     }
 
-    var template = `<tr bin-id="${id}">
+    var template = `<tr bin-id="${id}" class="bin-row">
                        <td><input type="radio" name="active_bin" value="${id}"></td>
                        <td><div id="bin_color_${id}" class="colorpicker" color="${color}" style="background-color: ${color}"></td>
-                       <td data-value="${name}"><input type="text" class="bin-name" onChange="emit('bin-settings-changed');" size="21" id="bin_name_${id}" value="${name}"></td>
+                       <td data-value="${name}">
+                            <input type="text" class="bin-name" onChange="emit('bin-settings-changed'); this.parentNode.setAttribute('data-value', this.value);" size="21" id="bin_name_${id}" value="${name}">
+                        </td>
                        ${mode != 'pan' ? `
                            <td data-value="${contig_count}" class="num-items"><input type="button" value="${contig_count}" title="Click for contig names" onClick="showContigNames(${id});"></td>
                            <td data-value="${contig_length}" class="length-sum"><span>${contig_length}</span></td>
@@ -81,6 +93,13 @@ Bins.prototype.NewBin = function(id, binState) {
                             <td data-value="${redundancy}" class="redundancy"><input type="button" value="${redundancy}" title="Click for redundant hits" onClick="showRedundants(${id}); "></td>
                        `}
                        <td><center><span class="glyphicon glyphicon-trash" aria-hidden="true" alt="Delete this bin" title="Delete this bin" onClick="bins.DeleteBin(${id});"></span></center></td>
+                    </tr>
+                    <tr style="${ $('#estimate_taxonomy').is(':checked') ? `` : `display: none;`}" data-parent="${id}">
+                            <td style="border-top: 0px;">&nbsp;</td>
+                            <td style="border-top: 0px;">&nbsp;</td>
+                            <td colspan="6" style="border-top: 0px; padding-top: 0px;">
+                                <span bin-id="${id}" class="taxonomy-name-label">N/A</span>
+                            </td>
                     </tr>`;
 
     this.container.insertAdjacentHTML('beforeend', template);
@@ -96,12 +115,30 @@ Bins.prototype.NewBin = function(id, binState) {
 
             if (!bySetColor) $(el).val(hex);
         },
-        onHide: function() {
-            emit('bin-settings-changed');
+        onShow: function() {
+            $(this).attr('color-before', $(this).attr('color'));
+        },
+        onHide: function(picker) {
+            let el = $(picker).data('colpick').el;
+            let current_color = $(el).attr('color');
+            let previous_color = $(el).attr('color-before');
+
+            if (current_color != previous_color) {
+                emit('bin-settings-changed');
+                bins.PushHistory([{'type': 'ChangeColor', 
+                                   'bin_id': id,
+                                   'color-before': previous_color,
+                                   'color': current_color}]);
+            }
         }
     }).keyup(function() {
         $(this).colpickSetColor(this.value);
     });
+
+    this.PushHistory([{'type': 'NewBin',
+                       'name': name,
+                       'bin_id': id,
+                       'color': color}]);
 };
 
 
@@ -132,7 +169,7 @@ Bins.prototype.GetSelectedBinColor = function() {
 
 
 Bins.prototype.GetBinColor = function(bin_id) {
-    return this.container.querySelector('#bin_color_' + bin_id).getAttribute('color');
+    return this.container.querySelector('#bin_color_' + bin_id.toString()).getAttribute('color');
 }
 
 
@@ -141,7 +178,31 @@ Bins.prototype.DeleteBin = function(bin_id, show_confirm=true) {
         return;
     }
 
-    this.container.querySelector(`tr[bin-id='${bin_id}']`).remove();
+    let transaction = [];
+
+    for (const node of this.selections[bin_id].values()) {
+        node.ResetColor();
+
+        if (this.keepHistory) {
+            transaction.push({'type': 'RemoveNode', 
+                             'bin_id': bin_id,
+                             'node': node});
+        }
+    }
+
+    transaction.push({'type': 'DeleteBin', 
+                       'bin_id': bin_id,
+                       'name': document.getElementById('bin_name_' + bin_id).value,
+                       'color': document.getElementById('bin_color_' + bin_id).getAttribute('color')});
+
+    this.selections[bin_id].clear();
+    this.PushHistory(transaction);
+
+    let bin_row = this.container.querySelector(`tr[bin-id='${bin_id}']`);
+
+    bin_row.nextElementSibling.remove(); // remove taxonomy row too.
+    bin_row.remove();
+
     if (!this.container.querySelectorAll('*').length) {
         // No bins left
         this.NewBin();
@@ -150,13 +211,121 @@ Bins.prototype.DeleteBin = function(bin_id, show_confirm=true) {
     if (!this.container.querySelector('input[name=active_bin]:checked')) {
         this.SelectLastRadio();
     }
+    
+    this.RedrawBins();
+};
 
-    for (const node of this.selections[bin_id].values()) {
-        node.ResetColor();
+
+Bins.prototype.PushHistory = function(transaction) {
+    if (!this.keepHistory)
+        return;
+
+    this.history.push(transaction);
+
+    if (this.history.length > MAX_HISTORY_SIZE) {
+        this.history.shift();
     }
 
-    this.selections[bin_id].clear();
+    // adding something to history always clears the future
+    this.future = [];
+}
+
+
+Bins.prototype.Undo = function() {
+    let transaction = this.history.pop();
+
+    if (transaction) {
+        this.ProcessTransaction(transaction, reversed=true);
+        this.future.push(transaction);
+    }
+    else {
+        toastr.warning('Can\'t do undo, history is empty.');
+    }
+}
+
+Bins.prototype.Redo = function() {
+    let transaction = this.future.pop();
+
+    if (transaction) {
+        this.ProcessTransaction(transaction);
+        this.history.push(transaction);
+    } else {
+        toastr.warning('Can\'t do redo, future is empty.');
+    }
+}
+
+Bins.prototype.ProcessTransaction = function(transaction, reversed=false) {        
+    this.keepHistory = false;
+    this.allowRedraw = false;
+
+    let updated_bins = new Set();
+    let removed_bins = new Set();
+    
+    for (var i = 0; i < transaction.length; i++) {
+        let operation = transaction[i];
+
+        updated_bins.add(operation.bin_id);
+
+        if (reversed) {
+            switch (operation.type) {
+                case 'AppendNode':
+                    this.RemoveNode(operation.node, operation.bin_id);
+                    break;
+                case 'RemoveNode':
+                    this.AppendNode(operation.node, operation.bin_id);
+                    break;
+                case 'ChangeColor':
+                    $('#bin_color_' + operation.bin_id).attr('color', operation['color-before']);
+                    $('#bin_color_' + operation.bin_id).css('background-color', operation['color-before']);
+                    break;
+                case 'DeleteBin':
+                    this.NewBin(operation.bin_id, {'name': operation.name, 
+                                                  'color': operation.color});
+                    removed_bins.delete(operation.bin_id);
+                    break;
+                case 'NewBin':
+                    this.DeleteBin(operation.bin_id, show_confirm=false);
+                    removed_bins.add(operation.bin_id);
+                    break;
+            }
+        }
+        else {
+            switch (operation.type) {
+                case 'AppendNode':
+                    this.AppendNode(operation.node, operation.bin_id);
+                    break;
+                case 'RemoveNode':
+                    this.RemoveNode(operation.node, operation.bin_id);
+                    break;
+                case 'ChangeColor':
+                    $('#bin_color_' + operation.bin_id).attr('color', operation.color);
+                    $('#bin_color_' + operation.bin_id).css('background-color', operation.color);
+                    break;
+                case 'DeleteBin':
+                    this.DeleteBin(operation.bin_id, show_confirm=false);
+                    removed_bins.add(operation.bin_id);
+                    break;
+                case 'NewBin':
+                    this.NewBin(operation.bin_id, {'name': operation.name, 
+                                                  'color': operation.color});
+                    removed_bins.delete(operation.bin_id);
+                    break;
+            }
+        }
+    }
+
+    let bins_to_update = [];
+    for (const bin_id of updated_bins) {
+        if (!removed_bins.has(bin_id)) {
+            bins_to_update.push(bin_id);
+        }
+    }
+
+    this.keepHistory = true;
+    this.allowRedraw = true;
+    this.RebuildIntersections();
     this.RedrawBins();
+    this.UpdateBinsWindow(bins_to_update);
 };
 
 
@@ -165,31 +334,30 @@ Bins.prototype.DeleteAllBins = function() {
         return;
     }
 
-    for (let tr of this.container.querySelectorAll('tr')) {
+    for (let tr of this.container.querySelectorAll('tr.bin-row')) {
         this.DeleteBin(tr.getAttribute('bin-id'), false);
     }
 };
 
 
-Bins.prototype.AppendNode = function(targets) {
-    var bin_id = this.GetSelectedBinId();
-    var bin_color = this.GetSelectedBinColor();
+Bins.prototype.AppendNode = function(targets, bin_id) {
+    if (typeof bin_id === 'undefined') {
+        var bin_id = this.GetSelectedBinId();
+    }
+    var bin_color = this.GetBinColor(bin_id);
     var bins_to_update = new Set();
 
     if (!Array.isArray(targets)) {
         targets = [targets];
     }
 
+    let transaction = [];
+
     for (const target of targets) {
         if (target.collapsed)
             continue;
 
         for (const node of target.IterateChildren()) {
-            if (!this.selections[bin_id].has(node)) {
-                this.selections[bin_id].add(node);
-                bins_to_update.add(bin_id);
-            }
-
             for (let other_bin_id in this.selections) {
                 // remove node from other bins except the current one
                 if (other_bin_id == bin_id) {
@@ -199,6 +367,23 @@ Bins.prototype.AppendNode = function(targets) {
                 if (this.selections[other_bin_id].has(node)) {
                     this.selections[other_bin_id].delete(node);
                     bins_to_update.add(other_bin_id);
+
+                    if (this.keepHistory && node.IsLeaf()) {
+                        transaction.push({'type': 'RemoveNode', 
+                                          'bin_id': other_bin_id,
+                                          'node': node});
+                    }
+                }
+            }
+
+            if (!this.selections[bin_id].has(node)) {
+                this.selections[bin_id].add(node);
+                bins_to_update.add(bin_id);
+
+                if (this.keepHistory && node.IsLeaf()) {
+                    transaction.push({'type': 'AppendNode', 
+                                      'bin_id': bin_id,
+                                      'node': node});
                 }
             }
 
@@ -207,14 +392,18 @@ Bins.prototype.AppendNode = function(targets) {
     }
     
     bins_to_update = Array.from(bins_to_update);
+    this.PushHistory(transaction);
     this.RedrawBins();
     this.UpdateBinsWindow(bins_to_update);
 };
 
 
-Bins.prototype.RemoveNode = function(targets) {
-    var bin_id = this.GetSelectedBinId();
+Bins.prototype.RemoveNode = function(targets, bin_id) {
+    if (typeof bin_id === 'undefined') {
+        var bin_id = this.GetSelectedBinId();
+    }
     var bins_to_update = new Set();
+    let transaction = [];
 
     if (!Array.isArray(targets)) {
         targets = [targets];
@@ -229,6 +418,12 @@ Bins.prototype.RemoveNode = function(targets) {
                 if (this.selections[bin_id].has(node)) {
                     this.selections[bin_id].delete(node);
                     bins_to_update.add(bin_id);
+
+                    if (this.keepHistory && node.IsLeaf()) {
+                        transaction.push({'type': 'RemoveNode', 
+                                          'bin_id': bin_id,
+                                          'node': node});
+                    }
                 }
             }
 
@@ -237,6 +432,7 @@ Bins.prototype.RemoveNode = function(targets) {
     }
 
     bins_to_update = Array.from(bins_to_update);
+    this.PushHistory(transaction);
     this.RedrawBins();
     this.UpdateBinsWindow(bins_to_update);
 };
@@ -252,7 +448,22 @@ Bins.prototype.IsNodeMemberOfBin = function(node) {
 };
 
 
+Bins.prototype.BinsSorted = function() {
+    // move every taxonomy row after their original parent.
+    this.container.querySelectorAll('[data-parent]').forEach((elem) => { 
+        let taxonomy_row = elem.parentNode.removeChild(elem);
+        let parent_bin_id = elem.getAttribute('data-parent');
+
+        let parent_row = this.container.querySelector(`tr[bin-id="${parent_bin_id}"]`);
+        parent_row.insertAdjacentHTML('afterend', taxonomy_row.outerHTML);
+    });
+}
+
+
 Bins.prototype.UpdateBinsWindow = function(bin_list) {
+    if (!this.allowRedraw)
+        return;
+
     bin_list = bin_list || Object.keys(this.selections);
 
     for (let i = 0; i < bin_list.length; i++) {
@@ -270,6 +481,7 @@ Bins.prototype.UpdateBinsWindow = function(bin_list) {
             }
 
             let bin_row = this.container.querySelector(`tr[bin-id="${bin_id}"]`);
+            let bin_name = bin_row.querySelector('.bin-name').valie
 
             bin_row.querySelector('td.num-gene-clusters').setAttribute('data-value', num_gene_clusters);
             bin_row.querySelector('td.num-gene-clusters>input').value = num_gene_clusters;
@@ -293,6 +505,7 @@ Bins.prototype.UpdateBinsWindow = function(bin_list) {
             }
 
             let bin_row = this.container.querySelector(`tr[bin-id="${bin_id}"]`);
+            let bin_name = bin_row.querySelector('.bin-name').value;
 
             bin_row.querySelector('td.num-items').setAttribute('data-value', num_items);
             bin_row.querySelector('td.num-items>input').value = num_items;
@@ -369,6 +582,54 @@ Bins.prototype.UpdateBinsWindow = function(bin_list) {
                         showRedundants(bin_id, true);
                     },
                 });
+
+                if (!$('#estimate_taxonomy').is(':checked')) {
+                    continue;
+                }
+
+                let collection_data = {};
+                collection_data[bin_name] = [];
+
+                for (let node of this.selections[bin_id].values()) {
+                    if (node.IsLeaf()) {
+                        collection_data[bin_name].push(node.label);
+                    }
+                }
+
+                $.ajax({
+                    type: "POST",
+                    url: "/data/get_taxonomy",
+                    cache: false,
+                    data: {
+                        'collection': JSON.stringify(collection_data)
+                    },
+                    success: (data) => {
+                        if (data.hasOwnProperty('status') && data.status != 0) {
+                            if ($('#estimate_taxonomy').is(':checked')) {
+                                toastr.error('"' + data.message + '", the server said.', "The anvi'o headquarters is upset");
+                            }
+                            $('#estimate_taxonomy').prop('checked', false);
+                            toggleTaxonomyEstimation();
+                            return;
+                        }
+                        if (data.hasOwnProperty(bin_name)) {
+                            let order = ["t_domain", "t_phylum", "t_class",
+                                         "t_order", "t_family", "t_genus", "t_species"];
+
+                            this.container.querySelector(`span.taxonomy-name-label[bin-id="${bin_id}"]`).innerHTML = " (?) Unknown";
+
+                            for (let i=order.length-1; i >= 0; i--) {
+                                let level = order[i];
+
+                                if (data[bin_name]['consensus_taxonomy'][level] !== null) {
+                                    let label = level.split('_')[1][0];
+                                    this.container.querySelector(`span.taxonomy-name-label[bin-id="${bin_id}"]`).innerHTML = " (" + label + ") " + data[bin_name]['consensus_taxonomy'][level].replace('_', ' ');
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                });
             }
         }
     }
@@ -403,6 +664,7 @@ Bins.prototype.MigrateCollection = function() {
 
 
 Bins.prototype.ImportCollection = function(collection, threshold = 1000) {
+    this.keepHistory = false;
     let bins_cleared = false;
 
     for (let bin_name of Object.keys(collection['data']).sort())
@@ -423,13 +685,14 @@ Bins.prototype.ImportCollection = function(collection, threshold = 1000) {
             }
         }
 
-        if ((mode != 'full' || sum_length >= threshold) && nodes.length > 0)
+        if ((mode != 'full' || threshold == 0 || sum_length >= threshold) && nodes.length > 0)
         {
             if (!bins_cleared)
             {
                 this.bin_counter = 0;
                 this.selections = {};
                 this.container.innerHTML = '';
+                this.history = [];
                 bins_cleared = true;
             }
 
@@ -447,6 +710,8 @@ Bins.prototype.ImportCollection = function(collection, threshold = 1000) {
         this.UpdateBinsWindow();
         this.RedrawBins();
     }
+
+    this.keepHistory = true;
 };
 
 
@@ -454,7 +719,7 @@ Bins.prototype.ExportCollection = function(use_bin_id=false) {
     let data = {};
     let colors = {};
 
-    for (let tr of this.container.querySelectorAll('tr')) {
+    for (let tr of this.container.querySelectorAll('tr.bin-row')) {
         let bin_id = tr.getAttribute('bin-id');
         let bin_name = tr.querySelector('.bin-name').value;
         let bin_color = tr.querySelector('.colorpicker').getAttribute('color');
@@ -522,6 +787,9 @@ Bins.prototype.RedrawLineColors = function() {
 
 Bins.prototype.RedrawBins = function() {
     if (!drawer)
+        return;
+
+    if (!this.allowRedraw)
         return;
 
     var leaf_list = [];
@@ -741,8 +1009,40 @@ Bins.prototype.RedrawBins = function() {
 }
 
 Bins.prototype.RebuildIntersections = function() {
+    if (!this.allowRedraw)
+        return;
+
     for (let bin_id in this.selections) {
+        if (!this.selections[bin_id].size) {
+            continue;
+        }
+        let bin_color = this.GetBinColor(bin_id);
         let inserted = true;
+        let removed = true;
+
+        while (removed) {
+            removed = false;
+
+            for (let node of this.selections[bin_id].values()) {
+                if (node.IsLeaf()) {
+                    continue;
+                }
+
+                let any_child_in_bin = false;
+                let child = node.child;
+
+                while (child.sibling) {
+                    any_child_in_bin = any_child_in_bin || this.selections[bin_id].has(child);
+                    child = child.sibling;
+                }
+
+                if (!any_child_in_bin) {
+                    // node doesn't have any child in this bin so let's get rid of it.
+                    this.selections[bin_id].delete(node);
+                    node.ResetColor();
+                }
+            }   
+        }
 
         while (inserted) {
             inserted = false;
@@ -762,6 +1062,7 @@ Bins.prototype.RebuildIntersections = function() {
                 if (node.sibling && this.selections[bin_id].has(node.sibling)) {
                     // node and its sibling in same bin, so parent should too.
                     this.selections[bin_id].add(parent);
+                    parent.SetColor(bin_color);
                     inserted = true;
                 }
             }

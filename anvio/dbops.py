@@ -45,7 +45,7 @@ from anvio.tables.ntpositions import TableForNtPositions
 from anvio.tables.miscdata import TableForItemAdditionalData
 from anvio.tables.miscdata import TableForLayerAdditionalData
 from anvio.tables.kmers import KMerTablesForContigsAndSplits
-from anvio.tables.genelevelcoverages import TableForGeneLevelCoverages, TableForGeneLevelCoveragesINSeq
+from anvio.tables.genelevelcoverages import TableForGeneLevelCoverages
 from anvio.tables.contigsplitinfo import TableForContigsInfo, TableForSplitsInfo
 
 
@@ -77,7 +77,7 @@ class DBClassFactory:
 
         if db_type not in self.DB_CLASSES:
             raise ConfigError("DBClassFactory speaking. I do not know a class for database type\
-                                %s :/ I can deal with these though: '%s'" % (db_type, ', '.join(self.DB_CLASSES))) 
+                                %s :/ I can deal with these though: '%s'" % (db_type, ', '.join(self.DB_CLASSES)))
         return self.DB_CLASSES[db_type]
 
 
@@ -252,7 +252,7 @@ class ContigsSuperclass(object):
         elif split_names_of_interest:
             contig_names_of_interest = set([self.splits_basic_info[s]['parent'] for s in split_names_of_interest])
 
-        if gene_caller_ids_of_interest or split_names_of_interest: 
+        if gene_caller_ids_of_interest or split_names_of_interest:
             # someone was interested in a subest of things, but found nothing for them?
             if not len(contig_names_of_interest):
                 raise ConfigError("Well, it turns out there are no contigs matching to the list of gene calls anvi'o\
@@ -274,7 +274,7 @@ class ContigsSuperclass(object):
                                                                   error_if_no_data=True)
             self.progress.end()
         else:
-            # load all 
+            # load all
             self.progress.new('Loading contig sequences')
             self.progress.update('Reading ALL contig sequences')
             self.contig_sequences = contigs_db.db.get_table_as_dict(t.contig_sequences_table_name, string_the_key=True)
@@ -889,6 +889,8 @@ class PanSuperclass(object):
         self.pan_db_path = A('pan_db')
         self.genomes_storage_path = A('genomes_storage')
         self.skip_init_functions = A('skip_init_functions')
+        self.just_do_it = A('just_do_it')
+        self.include_gc_identity_as_function = A('include_gc_identity_as_function')
 
         self.genome_names = []
         self.gene_clusters = {}
@@ -1001,7 +1003,7 @@ class PanSuperclass(object):
         you specified. This looks like a shitty design, but was required to support exploratory / ad hoc user wishes through
         both command line and interactive anvi'o interfaces.
 
-        By default, this funciton will report amino acid sequences. You can ask for DNA sequences if setting
+        By default, this function will report amino acid sequences. You can ask for DNA sequences if setting
         the flag `report_DNA_sequences` True.
 
         """
@@ -1014,17 +1016,29 @@ class PanSuperclass(object):
                                both command line and interactive anvi'o interfaces.")
 
         if not skip_alignments and self.gene_clusters_gene_alignments_available and report_DNA_sequences:
-            self.run.warning("Please read carefully. Here anvi'o attempts to get sequences for the gene clusters you are interested in. While\
-                              the amino acid sequences for those gene clusters were aligned, you are asking for DNA sequences. While amino acid\
-                              seuqence alignment summary (the anvi'o way of storing alignment information) can be used to align DNA sequences\
-                              instantaneously, due to intricacies of gene callers, the amino acid sequence of a gene stored in the\
-                              contigs database may differ from its DNA seqeunce. For those rare instances, the alignment summary for the amino acid\
-                              sequence can no longer be used to make sense of the DNA sequence (see https://github.com/merenlab/anvio/issues/772 for\
-                              more informaiton). What needs to be done is to do another alignment on the fly. But as you probably already guessed,\
-                              anvi'o will not do that for you, and instead will report your DNA sequences for your genes in your gene clusters\
-                              unaligned. If you really really think anvi'o should do it you have two options: if you are a member of the MerenLab,\
-                              re-open and fix the issue #772. If you are not a member, then send us an e-mail.")
-            skip_alignments = True
+            if self.just_do_it:
+                self.run.warning("Please read carefully. Since you are using the flag `--just-do-it`, anvi'o will attempt to do someting that may not\
+                                  work in some cases. It seems you wish to get sequences for some gene clusters you are interested in. Even though\
+                                  it was the the amino acid sequences that was aligned for these gene clusters, you are asking for DNA sequences.\
+                                  Anvi'o will convert the amino acid sequence alignment into a DNA alignment instantly (wihtout any additional\
+                                  alignment step), but due to the intricacies of gene calling, the amino acid sequence of a gene that is stored\
+                                  in the contigs database may differ from its DNA sequence. YES THAT IS TRUE BECAUSE THAT'S HOW BIOINFORATICS ROLLS.\
+                                  For those rare instances, the alignment summary for the amino acid sequence can no longer be used to make sense of\
+                                  the DNA sequence (see https://github.com/merenlab/anvio/issues/772 for an example in which we have observed this).\
+                                  But we will give it a try here in your case becasue you asked anvi'o to just do it :/ If this explodes downstream,\
+                                  it is on you alone.")
+            else:
+                self.run.warning("Please read carefully. At this part of the code anvi'o attempts to get sequences for the gene clusters you are\
+                                  interested in. While it was the amino acid sequences that were aligned here, you are you are asking for DNA sequences.\
+                                  Even though the amino acid sequence alignment summary (the anvi'o way of storing alignment information) can be used to\
+                                  align DNA sequences instantaneously, due to intricacies associated with the gene calling step, the amino acid sequence\
+                                  of a gene stored in the contigs database may differ from its DNA sequence (true story). For those rare instances, the\
+                                  alignment summary for the amino acid sequence may no longer be used to make sense of the DNA sequence \
+                                  (see https://github.com/merenlab/anvio/issues/772 for more information). What needs to be done is to do another alignment\
+                                  on the fly. But as you probably already have already guessed, anvi'o will not do that for you, and instead it will report\
+                                  your DNA sequences for your genes in your gene clusters unaligned. If you really really want to try and see whether it will\
+                                  work for your gene clusters here, you can try to include `--just-do-it` flag in your command line.")
+                skip_alignments = True
 
         sequences = {}
 
@@ -1039,7 +1053,7 @@ class PanSuperclass(object):
             raise ConfigError("gene_cluster_names for get_sequences_for_gene_clusters must be a non-empty `set`.")
 
         if not self.genomes_storage_is_available:
-            raise ConfigError("The pan anvi'o super class for is upset. You are attempting to get AA seqeunces for %s,\
+            raise ConfigError("The pan anvi'o super class for is upset. You are attempting to get AA sequences for %s,\
                                but there is not genomes storage is available to get it." \
                                     % 'a gene cluster' if len(gene_cluster_names) > 1 else '%d gene_clusters' % len(gene_cluster_names))
 
@@ -1054,7 +1068,7 @@ class PanSuperclass(object):
                                Here are some of the missing ones; %s" \
                                         % (len(missing_gene_cluster_names), len(gene_cluster_names), ', '.join(missing_gene_cluster_names[0:5])))
 
-        self.progress.new('Accessing gene cluster seqeunces', progress_total_items=len(gene_cluster_names))
+        self.progress.new('Accessing gene cluster sequences', progress_total_items=len(gene_cluster_names))
 
         for gene_cluster_name in gene_cluster_names:
             self.progress.increment()
@@ -1081,7 +1095,7 @@ class PanSuperclass(object):
             self.run.warning("The function `compute_homogeneity_indices_for_gene_clusters` did not receive any gene\
                               cluster names to work with. If you are a programmer, you should know that you are\
                               doing it wrong. If you are a user, please get in touch with a programmer because this\
-                              is not normal. This funciton will now return prematurely without computing anything :(")
+                              is not normal. This function will now return prematurely without computing anything :(")
             return None
 
         if self.args.quick_homogeneity:
@@ -1180,7 +1194,7 @@ class PanSuperclass(object):
                                                               skip_alignments=skip_alignments,
                                                               report_DNA_sequences=report_DNA_sequences)
 
-        self.progress.new('Writing gene cluster seqeunces to file')
+        self.progress.new('Writing gene cluster sequences to file')
         sequence_counter = 0
         for gene_cluster_name in sequences_dict:
             for genome_name in sequences_dict[gene_cluster_name]:
@@ -1349,7 +1363,7 @@ class PanSuperclass(object):
                     if functional_annotation_source in self.gene_clusters_functions_dict[gene_cluster][genome][gene_caller_id]:
                         annotation_blob = self.gene_clusters_functions_dict[gene_cluster][genome][gene_caller_id][functional_annotation_source]
                         accessions, annotations = [l.split('!!!') for l in annotation_blob.split("|||")]
-                        for a,f in zip(accessions, annotations):
+                        for a, f in zip(accessions, annotations):
                             if f not in gene_clusters_functions_summary_dict[gene_cluster]:
                                 gene_clusters_functions_summary_dict[gene_cluster][f] = 0
 
@@ -1396,6 +1410,18 @@ class PanSuperclass(object):
 
                     if functions:
                         self.gene_clusters_function_sources.update(list(functions.keys()))
+
+        if self.include_gc_identity_as_function:
+            self.progress.reset()
+            self.run.info_single("Gene cluster identities are being added as functions into the functions dictionary.\
+                                  Functional annotation resources will include `IDENTITY` as an option. See here why\
+                                  (apart from the fact that you asked for it by using the flag `--include-gc-identity-as-function`):\
+                                  https://github.com/merenlab/anvio/issues/1196", nl_after=1, mc='green')
+            for gene_cluster_id in self.gene_clusters:
+                for genome_name in self.genome_names:
+                    for gene_callers_id in self.gene_clusters[gene_cluster_id][genome_name]:
+                        self.gene_clusters_functions_dict[gene_cluster_id][genome_name][gene_callers_id]['IDENTITY'] = '%s|||%s' % (gene_cluster_id, gene_cluster_id)
+            self.gene_clusters_function_sources.update(['IDENTITY'])
 
         self.functions_initialized = True
 
@@ -1642,7 +1668,7 @@ class PanSuperclass(object):
             homogeneity_keys, homogeneity_dict = TableForItemAdditionalData(self.args).get(['functional_homogeneity_index', 'geometric_homogeneity_index'])
         elif self.functional_homogeneity_info_is_available and self.geometric_homogeneity_info_is_available and self.combined_homogeneity_info_is_available:
             homogeneity_keys, homogeneity_dict = TableForItemAdditionalData(self.args).get(['functional_homogeneity_index', 'geometric_homogeneity_index', 'combined_homogeneity_index'])
-        
+
 
         gene_clusters_to_remove = set([])
         all_gene_clusters = set(list(gene_cluster_occurrences_accross_genomes.keys()))
@@ -2383,10 +2409,12 @@ class ProfileSuperclass(object):
 
 
     def store_gene_level_coverage_stats_into_genes_db(self, parameters):
-        if self.inseq_stats:
-            table_for_gene_level_coverages = TableForGeneLevelCoveragesINSeq(self.genes_db_path, parameters, split_names=self.split_names_of_interest, table_name=t.gene_level_inseq_stats_table_name, table_structure=t.gene_level_inseq_stats_table_structure, mode="INSEQ", run=self.run)
-        else:
-            table_for_gene_level_coverages = TableForGeneLevelCoverages(self.genes_db_path, parameters, split_names=self.split_names_of_interest, table_name=t.gene_level_coverage_stats_table_name, table_structure=t.gene_level_coverage_stats_table_structure, mode="GENE_LEVEL COVERAGES", run=self.run)
+        table_for_gene_level_coverages = TableForGeneLevelCoverages(self.genes_db_path,
+                                                                    parameters,
+                                                                    split_names=self.split_names_of_interest,
+                                                                    mode="INSEQ" if self.inseq_stats else "STANDARD",
+                                                                    run=self.run)
+
         table_for_gene_level_coverages.store(self.gene_level_coverage_stats_dict)
 
 
@@ -2394,10 +2422,13 @@ class ProfileSuperclass(object):
         if not (self.collection_name and len(self.bin_names) == 1):
             raise ConfigError("The function `get_gene_level_coverage_stats_dicts_for_a_bin` can only be called from an instance\
                                of the profile super class that is initalized with a collection name and a single bin.")
-        if self.inseq_stats:
-            table_for_gene_level_coverages = TableForGeneLevelCoveragesINSeq(self.genes_db_path, parameters, split_names=self.split_names_of_interest, table_name=t.gene_level_inseq_stats_table_name, table_structure=t.gene_level_inseq_stats_table_structure, mode="INSEQ", run=self.run)
-        else:
-            table_for_gene_level_coverages = TableForGeneLevelCoverages(self.genes_db_path, parameters, split_names=self.split_names_of_interest, table_name=t.gene_level_coverage_stats_table_name, table_structure=t.gene_level_coverage_stats_table_structure, mode="GENE_LEVEL COVERAGES", run=self.run)
+
+        table_for_gene_level_coverages = TableForGeneLevelCoverages(self.genes_db_path,
+                                                                    parameters,
+                                                                    split_names=self.split_names_of_interest,
+                                                                    mode="INSEQ" if self.inseq_stats else "STANDARD",
+                                                                    run=self.run)
+
         self.gene_level_coverage_stats_dict = table_for_gene_level_coverages.read()
 
 
@@ -2416,7 +2447,8 @@ class ProfileSuperclass(object):
         parameters = {
             'min_cov_for_detection': min_cov_for_detection,
             'outliers_threshold': outliers_threshold,
-            'zeros_are_outliers': zeros_are_outliers
+            'zeros_are_outliers': zeros_are_outliers,
+            'mode': 'INSEQ' if self.inseq_stats else 'STANDARD'
         }
 
         if self.p_meta['blank']:
@@ -2459,7 +2491,25 @@ class ProfileSuperclass(object):
         if self.genes_db_path and self.genes_db_available:
             # THIS IS A SPECIAL CASE, where someone is initializing the gene-level coverage
             # stats for a single bin. In this case anvi'o will want to work with a genes
-            # database to read from, or to populate one for later uses.
+            # database to read from, or to populate one for later uses. But the proplem is,
+            # we may be called from a part of the code that doesn't know what KIND of genes
+            # database is being called. Therefore, the `parameters` dict we are about to send
+            # to `init_gene_level_coverage_stats_from_genes_db` may contain the default
+            # `mode` value set before. BUT WE DON'T WANT THAT.
+            mode_set_in_db = db.DB(self.genes_db_path, client_version=None, ignore_version=True).get_meta_value('mode')
+
+            self.run.warning("A gene stats database of type '%s' is found (anvi'o hopes that this is the type of stats you\
+                              were expecting to find)." % mode_set_in_db.upper())
+
+            parameters['mode'] = mode_set_in_db
+
+            # since we are here and learned the mode, we can also set the self.inseq_stats variable IF the table
+            # is actually inseq stats table. if we don't do this, the interactive interface will never load the inseq
+            # data because this variable is not set anywhere :/ the best practice would have been using a mode variable
+            # rather than an operation specific boolean flag, but well .. apologies to future generations of developers:
+            if mode_set_in_db == "INSEQ":
+                self.inseq_stats = True
+
             self.init_gene_level_coverage_stats_from_genes_db(parameters)
         elif self.genes_db_path and not self.genes_db_available:
             self.run.warning("You don't seem to have a genes database associated with your profile database.\
@@ -2484,10 +2534,7 @@ class ProfileSuperclass(object):
         # if we have not 'returned' yet it means we gotta go through this
         self.init_split_coverage_values_per_nt_dict(split_names)
 
-        if self.inseq_stats:
-            self.progress.new('Computing INSEQ stats ...')
-        else:
-            self.progress.new('Computing gene-level coverage stats ...')
+        self.progress.new('Computing gene-level coverage stats in %s mode...' % ('INSEQ' if self.inseq_stats else 'STANDARD'))
         self.progress.update('...')
 
         num_splits, counter = len(split_names), 1
@@ -2509,11 +2556,15 @@ class ProfileSuperclass(object):
             callback()
         else:
             if self.genes_db_path:
-                # we computer all the stuff, and we can as well store them into the genes db.
+                # we computed all the stuff, and we can as well store them into the genes db.
                 self.store_gene_level_coverage_stats_into_genes_db(parameters)
 
 
     def init_split_coverage_values_per_nt_dict(self, split_names=None):
+        if not self.auxiliary_profile_data_available:
+            raise ConfigError("What you're trying to do requires the AUXILIARY-DATA.db file :/ Please make sure it is in the\
+                               same directory with the profile database you are working with.")
+
         self.progress.new('Computing split coverage values per nt ...')
         self.progress.update('...')
 
@@ -2529,10 +2580,14 @@ class ProfileSuperclass(object):
 
         self.progress.end()
 
-    def get_gene_level_coverage_stats_entry_for_default(self, gene_callers_id, split_coverage, sample_name, gene_start,
-        gene_stop, gene_length, outliers_threshold=1.5):
-        # and recover the gene coverage array per position for a given sample:
 
+    def get_gene_level_coverage_stats_entry_for_default(self, gene_callers_id, split_coverage, sample_name, gene_start, gene_stop, gene_length, outliers_threshold=1.5):
+        """Returns coverage stats for a single gene in default mode.
+
+           The alternative to this mode is the INSEQ/Tn-SEQ mode that is handled in `get_gene_level_coverage_stats_entry_for_inseq`,
+           where coverage statistics are computed differently.
+        """
+        # and recover the gene coverage array per position for a given sample:
         gene_coverage_values_per_nt = split_coverage[sample_name][gene_start:gene_stop]
 
         mean_coverage = numpy.mean(gene_coverage_values_per_nt)
@@ -2561,18 +2616,21 @@ class ProfileSuperclass(object):
                 'non_outlier_positions': non_outlier_positions}
 
 
+    def get_gene_level_coverage_stats_entry_for_inseq(self, gene_callers_id, split_coverage, sample_name, gene_start, gene_stop, gene_length, outliers_threshold=0.9):
+        """Returns coverage stats for a single gene in INSEQ/Tn-SEQ mode.
 
-    def get_gene_level_coverage_stats_entry_for_inseq(self, gene_callers_id, split_coverage, sample_name, gene_start,
-        gene_stop, gene_length, outliers_threshold=0.9):
+           The alternative to this mode is the default mode that is handled in `get_gene_level_coverage_stats_entry_for_default`,
+           where coverage statistics are computed in most conventional ways.
+        """
+
         # Lets ignore those pesty warnings...
         numpy.seterr(divide='ignore', over='ignore')
 
         total_read_counts_in_sample = self.num_mapped_reads_per_sample[sample_name]
         gene_coverage_values_per_nt = split_coverage[sample_name][gene_start:gene_stop]
 
-        # INSEQ/Tn-SEQ views
+        # variables for INSEQ/Tn-SEQ views
         mean_coverage = 0
-        #detection = numpy.count_nonzero(gene_coverage_values_per_nt) / gene_length
         total_counts_of_sites_in_gene = 0
         total_counts_of_sites_in_gene_normalized = 0
         mean_three_prime = 0
@@ -2635,17 +2693,17 @@ class ProfileSuperclass(object):
                 mean_coverage = 0
 
         return {'gene_callers_id': gene_callers_id,
-                   'sample_name': sample_name,
-                   'gene_coverage_values_per_nt': gene_coverage_values_per_nt,
-                   'mean_coverage': float(mean_coverage),
-                   'insertions': total_counts_of_sites_in_gene,
-                   'insertions_normalized': total_counts_of_sites_in_gene_normalized,
-                   'mean_disruption': mean_three_prime,
-                   'below_disruption': below_threshold,}
+                'sample_name': sample_name,
+                'gene_coverage_values_per_nt': gene_coverage_values_per_nt,
+                'mean_coverage': float(mean_coverage),
+                'insertions': total_counts_of_sites_in_gene,
+                'insertions_normalized': total_counts_of_sites_in_gene_normalized,
+                'mean_disruption': mean_three_prime,
+                'below_disruption': below_threshold}
 
 
     def get_gene_level_coverage_stats(self, split_name, contigs_db, min_cov_for_detection=0, outliers_threshold=1.5,
-                                      zeros_are_outliers=False, gene_caller_ids_of_interest=set([])):
+                                      zeros_are_outliers=False, mode=None, gene_caller_ids_of_interest=set([])):
 
         # sanity check
         if not isinstance(gene_caller_ids_of_interest, set):
@@ -2752,6 +2810,74 @@ class ProfileSuperclass(object):
         self.items_additional_data_keys, self.items_additional_data_dict = items_additional_data.get()
 
 
+    def get_split_coverages_dict(self, use_Q2Q3_coverages=False, splits_mode=False, report_contigs=False):
+        """ Returns an item coverages dictionary.
+
+            Parameters:
+                - use_Q2Q3_coverages: by default this function will return mean coverage instead of Q2Q3
+                        normalized mean coverages.
+                - splits_mode: this is important to understand. by default the function will return splits
+                        coverage of which are going to be matching to contigs from which they're coming
+                        from. splits_mode makes it so that the coverage of each split is for itself.
+                - report_contigs: when this parameter is True, then anvi'o reports a dictionary where each
+                        item is a contig and not a split.
+
+            Returns:
+                - A dictionary where each key is a split name or a contig name and each value is a dictionary
+                        of samples and their coverages.
+        """
+
+        if self.p_meta['blank']:
+            raise ConfigError("The anvi'o profile db %s seems to be a blank profile database. Blank\
+                               profiles do not have any coverage values of any sorts, so whatever you\
+                               were trying to do with this database will not work :/" % (self.profile_db_path))
+
+        if splits_mode and report_contigs:
+            raise ConfigError("--splits-mode and --report-contigs flags are incompatible. Pick one.")
+
+        coverage_data_of_interest = 'mean_coverage_Q2Q3' if use_Q2Q3_coverages else 'mean_coverage'
+
+        profile_db = ProfileDatabase(self.profile_db_path)
+
+        if self.p_meta['merged']:
+            table_name = coverage_data_of_interest + '_' + ('splits' if splits_mode else 'contigs')
+            split_coverages_dict = profile_db.db.get_table_as_dict(table_name)
+        else:
+            table_name = 'atomic_data' + '_' + ('splits' if splits_mode else 'contigs')
+            d = profile_db.db.get_table_as_dict(table_name, columns_of_interest=[coverage_data_of_interest])
+
+            # converting the raw dictionary read from the atomic data table into a for that is identical
+            # to the one that is read from a merged profile database:
+            split_coverages_dict = dict([(s, dict([(profile_db.meta['samples'], v) for v in list(d[s].values())])) for s in d])
+
+        profile_db.disconnect()
+
+        # this is one of the shittiest blocks of code in anvi'o :( it is because the atomics_data_contigs table
+        # in single profiles have a 'None' for the __parent__ column in them, even though it is not the case
+        # for atomic_data_splits table (which is essentially identical to the former, except that it keeps
+        # staitstics for individual splits rather than their parents). this tiny tiny design issue creates a
+        # ridiculously complex chain of issues that require us here to use Python's split function to resolve
+        # split names to contig names when the user wants to get back item coverages values for contigs from
+        # single profiles. after literally spending hours on this, meren decided to let it go. the proper
+        # solution is to implement a new table for parent - split name associations in contigs databases,
+        # and remove __parent__ columns from all single and merged profile databases once and for all. it is
+        # quite a bit of refactoring though.
+        if report_contigs:
+            contig_coverages_dict = {}
+
+            for split_name in split_coverages_dict:
+                contig_name = '_split_'.join(split_name.split('_split_')[:-1])
+
+                if contig_name in contig_coverages_dict:
+                    continue
+
+                contig_coverages_dict[contig_name] = split_coverages_dict[split_name]
+
+            return contig_coverages_dict
+        else:
+            return split_coverages_dict
+
+
     def init_collection_profile(self, collection_name):
         profile_db = ProfileDatabase(self.profile_db_path, quiet=True)
 
@@ -2786,7 +2912,7 @@ class ProfileSuperclass(object):
             if self.p_meta['merged']:
                 table_data = profile_db.db.get_table_as_dict('%s_splits' % table_name, omit_parent_column=True)
             else:
-                table_data = SINGLE_P(profile_db.db.get_table_as_dict('atomic_data_splits', columns_of_interest=table_name, omit_parent_column=True))
+                table_data = SINGLE_P(profile_db.db.get_table_as_dict('atomic_data_splits', columns_of_interest=[table_name, ], omit_parent_column=True))
 
             for bin_id in collection:
                 # populate averages per bin
@@ -2808,7 +2934,7 @@ class ProfileSuperclass(object):
         if self.p_meta['merged']:
             coverage_table_data = profile_db.db.get_table_as_dict('mean_coverage_splits', omit_parent_column=True)
         else:
-            coverage_table_data = SINGLE_P(profile_db.db.get_table_as_dict('atomic_data_splits', columns_of_interest="mean_coverage", omit_parent_column=True))
+            coverage_table_data = SINGLE_P(profile_db.db.get_table_as_dict('atomic_data_splits', columns_of_interest=["mean_coverage", ], omit_parent_column=True))
 
         self.bin_percent_recruitment_per_sample = {}
         if self.p_meta['blank']:
@@ -3115,6 +3241,7 @@ class PanDatabase:
         self.db.create_table(t.collections_splits_table_name, t.collections_splits_table_structure, t.collections_splits_table_types)
         self.db.create_table(t.states_table_name, t.states_table_structure, t.states_table_types)
 
+
         return self.db
 
 
@@ -3162,12 +3289,12 @@ class ContigsDatabase:
             self.meta = dict([(k, meta_table[k]['value']) for k in meta_table])
 
             try:
-                for key in ['split_length', 'kmer_size', 'total_length', 'num_splits', 'num_contigs', 'genes_are_called', 'splits_consider_gene_calls']:
+                for key in ['split_length', 'kmer_size', 'total_length', 'num_splits', 'num_contigs', 'genes_are_called', 'splits_consider_gene_calls', 'scg_taxonomy_was_run']:
                     self.meta[key] = int(self.meta[key])
             except KeyError:
                 raise ConfigError("Oh no :( There is a contigs database here at '%s', but it seems to be broken :( It is very\
                                    likely that the process that was trying to create this database failed, and left behind\
-                                   this unfinished thingy (if you would like to picture its state you an imagine the baby\
+                                   this unfinished thingy (if you would like to picture its state you should imagine the baby\
                                    Voldemort at King's Cross). Well, anvi'o believes it is best if you make it go away with\
                                    fire, and try whatever you were trying before you got this error one more time with a\
                                    proper contigs database. End of sad news. Bye now." % self.db_path)
@@ -3224,6 +3351,8 @@ class ContigsDatabase:
         self.db.create_table(t.splits_info_table_name, t.splits_info_table_structure, t.splits_info_table_types)
         self.db.create_table(t.contigs_info_table_name, t.contigs_info_table_structure, t.contigs_info_table_types)
         self.db.create_table(t.nt_position_info_table_name, t.nt_position_info_table_structure, t.nt_position_info_table_types)
+        self.db.create_table(t.scg_taxonomy_table_name, t.scg_taxonomy_table_structure, t.scg_taxonomy_table_types)
+
 
         return self.db
 
@@ -3407,6 +3536,7 @@ class ContigsDatabase:
             kmer_size = int(kmer_size)
         except:
             raise ConfigError("K-mer size must be an integer.")
+
         if kmer_size < 2 or kmer_size > 8:
             raise ConfigError("We like our k-mer sizes between 2 and 8, sorry! (but then you can always change the\
                                 source code if you are not happy to be told what you can't do, let us know how it goes!).")
@@ -3547,6 +3677,7 @@ class ContigsDatabase:
         self.db.set_meta_value('gene_function_sources', None)
         self.db.set_meta_value('genes_are_called', (not skip_gene_calling))
         self.db.set_meta_value('splits_consider_gene_calls', (not skip_mindful_splitting))
+        self.db.set_meta_value('scg_taxonomy_was_run', False)
         self.db.set_meta_value('creation_date', self.get_date())
         self.disconnect()
 
