@@ -6,8 +6,8 @@ import os
 import anvio
 import anvio.utils as utils
 import anvio.terminal as terminal
-import anvio.filesnpaths as filesnpaths
 
+from anvio.errors import ConfigError
 
 __author__ = "Developers of anvi'o (see AUTHORS.txt)"
 __copyright__ = "Copyleft 2015-2019, the Meren Lab (http://merenlab.org/)"
@@ -91,11 +91,14 @@ class CONCOCT:
                         ArgumentTypeError."}
                     )
     }
+
     citation = "Johannes Alneberg, Brynjar Smári Bjarnason, Ino de Bruijn, \
                 Melanie Schirmer, Joshua Quick, Umer Z Ijaz, Leo Lahti,\
                 Nicholas J Loman, Anders F Andersson & Christopher Quince. \
                 2014. Binning metagenomic contigs by coverage and composition. \
                 Nature Methods, doi: 10.1038/nmeth.3103"
+
+    cluster_type = 'contig'
 
     def __init__(self, run=run, progress=progress):
         self.run = run
@@ -105,21 +108,14 @@ class CONCOCT:
         utils.is_program_exists(self.program_name)
 
 
-    def cluster(self, input_files, args, threads=1, splits_mode=False):
-        self.run.info_single("If you publish results from this workflow, \
-                               please do not forget to cite \n%s" % CONCOCT.citation,
-                               nl_before=1, nl_after=1, mc='green')
+    def cluster(self, input_files, args, work_dir, threads=1):
+        J = lambda p: os.path.join(work_dir, p)
 
-        self.temp_path = filesnpaths.get_temp_directory_path()
-        log_path = os.path.join(self.temp_path, 'logs.txt')
-
-        if anvio.DEBUG:
-            self.run.info('Working directory', self.temp_path)
-
+        log_path = J('logs.txt')
         cmd_line = [self.program_name,
-            '--coverage_file', input_files.coverage,
-            '--composition_file', input_files.fasta,
-            '--basename', self.temp_path,
+            '--coverage_file', input_files.contig_coverages,
+            '--composition_file', input_files.contigs_fasta,
+            '--basename', work_dir,
             '--threads', threads,
              *utils.serialize_args(args, use_underscore=True)]
 
@@ -131,7 +127,13 @@ class CONCOCT:
         clusters = {}
         threshold = args.length_threshold or '1000'
 
-        with open(os.path.join(self.temp_path, 'clustering_gt%s.csv' % threshold), 'r') as f:
+        output_file_name = 'clustering_gt%s.csv' % threshold
+        output_file_path = J(output_file_name)
+        if not os.path.exists(output_file_path):
+            raise ConfigError("One of the critical output files is missing ('%s'). Please take a look at the "
+                              "log file: %s" % (output_file_name, log_path))
+
+        with open(output_file_path, 'r') as f:
             lines = f.readlines()[1:]
 
             for entry in lines:

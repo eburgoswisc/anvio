@@ -1,7 +1,6 @@
 FROM continuumio/miniconda3:4.7.10
-ENV ANVIO_VERSION "6_master"
+ENV ANVIO_VERSION "6.1_master"
 
-RUN conda update conda
 RUN conda config --env --add channels conda-forge
 RUN conda config --env --add channels bioconda
 RUN conda create -n anvioenv python=3.6
@@ -47,10 +46,9 @@ RUN echo 'export PATH=/opt/MaxBin-2.2.7:$PATH' >> ~/.bashrc
 
 # Install some helper tools
 RUN pip install virtualenv
-RUN apt-get install vim -yy
+RUN apt-get install vim util-linux -yy
 
 # Setup the environment
-ENV ANVIO_VERSION 6
 RUN echo "export PS1=\"\[\e[0m\e[47m\e[1;30m\] :: anvi'o v$ANVIO_VERSION :: \[\e[0m\e[0m \[\e[1;34m\]\]\w\[\e[m\] \[\e[1;32m\]>>>\[\e[m\] \[\e[0m\]\"" >> /root/.bashrc
 
 CMD /bin/bash -l
